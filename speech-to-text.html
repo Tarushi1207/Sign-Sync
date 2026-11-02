@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="style.css">
+    <title>Speech to Text</title>
+</head>
+<body>
+    
+    <h1>Live Captions</h1>
+    <button id="startBtn">Start Listening</button>
+    <button id="stopBtn">Stop Listening</button>
+    <p id="output">Your speech will appear here...</p>
+</body>
+<script>
+    const RecognitionAPI = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const recognition = new RecognitionAPI();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    const btn = document.getElementById('startBtn');
+    const output = document.getElementById('output');
+    const captionA = document.getElementById("captionA");
+
+    btn.onclick = function() {
+        listening = true;
+        finalTranscript = '';
+        output.textContent = "Listening..."
+        recognition.start();
+        
+    };
+
+    let finalTranscript = '';
+
+    recognition.onresult = function(event) {
+        let interimTranscript = '';
+
+        for(let i = event.resultIndex; i < event.results.length; i++) {
+            const transcript = event.results[i][0].transcript; 
+
+            if (event.results[i].isFinal) {
+                finalTranscript += transcript + '';
+            }else{
+                interimTranscript += transcript;
+            }
+        }
+        captionA.innerHTML = finalTranscript + '<span style="color:gray;">' + interimTranscript + '</span>';
+    };
+
+    const stopBtn = document.getElementById('stopBtn');
+    let listening = false;
+
+    stopBtn.onclick = function() {
+        listening = false;
+        recognition.stop();
+        output.textContent = "Stopped.";
+    };
+
+    recognition.onend = function() {
+        if(listening) {
+            recognition.start();
+        }
+    };
+
+</script>
+</html>

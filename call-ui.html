@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+
+    <title>ISL Connect</title>
+</head>
+
+<body>
+
+    <header id="topBar">
+        <h2>ISL Connect</h2>
+        <span id="connectionStatus">Connecting...</span>
+    </header>
+
+    <main id="videoArea">
+
+        <div class="tile">
+            <video id="localVideo" autoplay muted playsinline></video>
+
+            <div class="personName" id="localName">You</div>
+
+            <div class="caption" id="captionA">
+                Your captions will appear here.
+            </div>
+        </div>
+
+        <div class="tile">
+            <video id="remoteVideo" autoplay playsinline></video>
+
+            <div class="personName" id="remoteName">
+                Other Participant
+            </div>
+
+            <div class="caption" id="captionB">
+                Waiting for captions...
+            </div>
+        </div>
+
+    </main>
+
+    <div id="controlBar">
+
+        <button id="micBtn" title="Microphone">
+            <span class="material-symbols-outlined">mic</span>
+        </button>
+
+        <button id="camBtn" title="Camera">
+            <span class="material-symbols-outlined">videocam</span>
+        </button>
+
+        <button id="captionsBtn" title="Captions">
+            <span class="material-symbols-outlined">closed_caption</span>
+        </button>
+
+        <button id="endBtn" title="End Call">
+            <span class="material-symbols-outlined">call_end</span>
+        </button>
+
+    </div>
+
+    <script>
+
+        // ==========================================
+        // 1. HTML ELEMENTS
+        // ==========================================
+
+        const localVideo = document.getElementById("localVideo");
+        const remoteVideo = document.getElementById("remoteVideo");
+
+        const captionA = document.getElementById("captionA");
+        const captionB = document.getElementById("captionB");
+
+        const micBtn = document.getElementById("micBtn");
+        const camBtn = document.getElementById("camBtn");
+        const captionsBtn = document.getElementById("captionsBtn");
+        const endBtn = document.getElementById("endBtn");
+
+        const connectionStatus = document.getElementById("connectionStatus");
+
+
+        // ==========================================
+        // 2. VARIABLES
+        // ==========================================
+
+        let localStream = null;
+        let outgoingStream = null;
+        let cameraSource = null;
+        let cameraCanvas = null;
+        let canvasContext = null;
+        let animationFrameId = null;
+
+        let myRole = null;
+        let listening = false;
+        let offerStarted = false;
+        let peerReady = false;
+        let captionsEnabled = true;
+        let callEnded = false;
+
+        let pendingCandidates = [];
+
+
+        // ==========================================
+        // 3. WEBSOCKET CONNECTION
+        // ==========================================
+
+        const socket = new WebSocket("ws://10.200.4.134:8080");
+
+        function sendSignal(data) {
+
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(data));
+            } else {
+                console.warn("Signaling server is not connected.");
+            }
+
+        }
+
+
+        // ==========================================
+        // 4. WEBRTC CONNECTION
+        // ==========================================
+
+        const peerConnection = new RTCPeerConnection({
+
+            iceServers: [
+                {
+                    urls: "stun:stun.l.google.com:19302"
+                }
+            ]
+
+        });
+
+
+        // ==========================================
+        // 5. CORRECT CAMERA ORIENTATION
+        // ==========================================
+
+        function drawCameraFrame() {
+
+            if (
+                !cameraSource ||
+                !cameraCanvas ||
+                !canvasContext ||
+                callEnded
+            ) {
+                return;
+            }
+
+            if (
+                cameraSource.readyState >= 2 &&
+                cameraSource.videoWidth > 0
+            ) {
+
+                canvasContext.save();
+
+                canvasContext.translate(cameraCanvas.width, 0);
+                canvasContext.scale(-1, 1);
+
+                canvasContext.drawImage(
+                    cameraSource,
+                    0,
+                    0,
+                    cameraCanvas.width,
+                    cameraCanvas.height
+                );
+
+                canvasContext.restore();
+
+            }
+
+            animationFrameId = requestAnimationFrame(drawCameraFrame);
+
+        }
+
+
+        // ==========================================
+        // 6. START CAMERA AND MICROPHONE
+        // ==========================================
+
+        async function startMedia() {
+
+            try {
+
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true
+                });
+
+                cameraSource = document.createElement("video");
+
+                cameraSource.srcObject = localStream;
+                cameraSource.autoplay = true;
+                cameraSource.muted = true;
+                cameraSource.playsInline = true;
+
+                await cameraSource.play();
+
+                if (!cameraSource.videoWidth) {
+
+                    await new Promise(function (resolve) {
+                        cameraSource.onloadedmetadata = resolve;
+                    });
+
+                }
+
+                cameraCanvas = document.createElement("canvas");
+
+                cameraCanvas.width = cameraSource.videoWidth;
+                cameraCanvas.height = cameraSource.videoHeight;
+
+                canvasContext = cameraCanvas.getContext("2d");
+
+                drawCameraFrame();
+
+                const correctedCameraStream = cameraCanvas.captureStream(30);
+
+                const correctedVideoTrack =
+                    correctedCameraStream.getVideoTracks()[0];
+
+                outgoingStream = new MediaStream();
+
+                outgoingStream.addTrack(correctedVideoTrack);
+
+                localStream.getAudioTracks().forEach(function (track) {
+                    outgoingStream.addTrack(track);
+                });
+
+                localVideo.srcObject = outgoingStream;
+
+                await localVideo.play().catch(function (error) {
+                    console.log("Local video playback:", error);
+                });
+
+                outgoingStream.getTracks().forEach(function (track) {
+                    peerConnection.addTrack(track, outgoingStream);
+                });
+
+                console.log("Camera orientation corrected.");
+                console.log("Camera and microphone connected.");
+
+                sendSignal({
+                    type: "ready"
+                });
+
+                await createOfferIfReady();
+
+            }
+
+            catch (error) {
+
+                console.error("Camera/Microphone error:", error);
+                connectionStatus.innerText = "Camera permission error";
+
+            }
+
+        }
+
+
+        // ==========================================
+        // 7. CREATE WEBRTC OFFER
+        // ==========================================
+
+        async function createOfferIfReady() {
+
+            if (
+                myRole !== "offerer" ||
+                !outgoingStream ||
+                !peerReady ||
+                offerStarted ||
+                callEnded
+            ) {
+                return;
+            }
+
+            offerStarted = true;
+
+            try {
+
+                const offer = await peerConnection.createOffer();
+
+                await peerConnection.setLocalDescription(offer);
+
+                sendSignal({
+                    type: "offer",
+                    description: peerConnection.localDescription
+                });
+
+                console.log("Offer sent successfully.");
+
+            }
+
+            catch (error) {
+
+                offerStarted = false;
+                console.error("Offer creation error:", error);
+
+            }
+
+        }
+
+
+        // ==========================================
+        // 8. ICE CANDIDATES
+        // ==========================================
+
+        peerConnection.onicecandidate = function (event) {
+
+            if (event.candidate) {
+
+                sendSignal({
+                    type: "candidate",
+                    candidate: event.candidate
+                });
+
+            }
+
+        };
+
+
+        async function addPendingCandidates() {
+
+            const candidates = pendingCandidates;
+            pendingCandidates = [];
+
+            for (const candidate of candidates) {
+
+                try {
+                    await peerConnection.addIceCandidate(candidate);
+                }
+
+                catch (error) {
+                    console.error("ICE candidate error:", error);
+                }
+
+            }
+
+        }
+
+
+        // ==========================================
+        // 9. RECEIVE REMOTE VIDEO AND AUDIO
+        // ==========================================
+
+        peerConnection.ontrack = function (event) {
+
+            console.log("Remote track received:", event.track.kind);
+
+            if (event.streams && event.streams.length > 0) {
+
+                remoteVideo.srcObject = event.streams[0];
+
+            } else {
+
+                if (!remoteVideo.srcObject) {
+                    remoteVideo.srcObject = new MediaStream();
+                }
+
+                remoteVideo.srcObject.addTrack(event.track);
+
+            }
+
+            remoteVideo.play().catch(function (error) {
+                console.error("Remote video playback error:", error);
+            });
+
+        };
+
+
+        // ==========================================
+        // 10. CONNECTION STATUS
+        // ==========================================
+
+        peerConnection.onconnectionstatechange = function () {
+
+            console.log("WebRTC state:", peerConnection.connectionState);
+
+            if (peerConnection.connectionState === "connected") {
+                connectionStatus.innerText = "Connected";
+            }
+
+            else if (peerConnection.connectionState === "connecting") {
+                connectionStatus.innerText = "Connecting...";
+            }
+
+            else if (peerConnection.connectionState === "disconnected") {
+                connectionStatus.innerText = "Connection interrupted";
+            }
+
+            else if (peerConnection.connectionState === "failed") {
+                connectionStatus.innerText = "Connection failed";
+            }
+
+            else if (peerConnection.connectionState === "closed") {
+                connectionStatus.innerText = "Call ended";
+            }
+
+        };
+
+
+        // ==========================================
+        // 11. WEBSOCKET MESSAGES
+        // ==========================================
+
+        socket.onopen = function () {
+
+            console.log("Signaling server connected.");
+            connectionStatus.innerText = "Waiting for participant...";
+
+        };
+
+
+        socket.onmessage = async function (event) {
+
+            const message = JSON.parse(event.data);
+
+            console.log("Received message:", message);
+
+            try {
+
+                if (message.type === "waiting") {
+
+                    connectionStatus.innerText = "Waiting for participant...";
+
+                }
+
+                else if (message.type === "room-full") {
+
+                    connectionStatus.innerText = "Room is full";
+
+                }
+
+                else if (message.type === "role") {
+
+                    myRole = message.role;
+
+                    console.log("Your role:", myRole);
+
+                    document.getElementById("localName").innerText =
+                        myRole === "offerer"
+                            ? "Person A (You)"
+                            : "Person B (You)";
+
+                    document.getElementById("remoteName").innerText =
+                        myRole === "offerer"
+                            ? "Person B"
+                            : "Person A";
+
+                }
+
+                else if (message.type === "peer-ready") {
+
+                    console.log("Other participant's camera is ready.");
+
+                    peerReady = true;
+
+                    await createOfferIfReady();
+
+                }
+
+                else if (message.type === "offer") {
+
+                    console.log("Offer received.");
+
+                    await peerConnection.setRemoteDescription(
+                        message.description
+                    );
+
+                    await addPendingCandidates();
+
+                    const answer = await peerConnection.createAnswer();
+
+                    await peerConnection.setLocalDescription(answer);
+
+                    sendSignal({
+                        type: "answer",
+                        description: peerConnection.localDescription
+                    });
+
+                    console.log("Answer sent.");
+
+                }
+
+                else if (message.type === "answer") {
+
+                    await peerConnection.setRemoteDescription(
+                        message.description
+                    );
+
+                    await addPendingCandidates();
+
+                    console.log("Answer received.");
+
+                }
+
+                else if (message.type === "candidate") {
+
+                    if (peerConnection.remoteDescription) {
+
+                        await peerConnection.addIceCandidate(
+                            message.candidate
+                        );
+
+                    } else {
+
+                        pendingCandidates.push(message.candidate);
+
+                    }
+
+                }
+
+                else if (message.type === "caption") {
+
+                    if (captionsEnabled) {
+                        captionB.innerText = message.text;
+                    }
+
+                }
+
+                else if (message.type === "peer-left") {
+
+                    connectionStatus.innerText = "Other participant left";
+
+                    remoteVideo.srcObject = null;
+
+                    captionB.innerText = "Participant disconnected.";
+
+                }
+
+            }
+
+            catch (error) {
+
+                console.error("WebRTC/Signaling error:", error);
+
+            }
+
+        };
+
+
+        socket.onerror = function (error) {
+
+            console.error("WebSocket error:", error);
+            connectionStatus.innerText = "Server error";
+
+        };
+
+
+        socket.onclose = function () {
+
+            if (!callEnded) {
+                connectionStatus.innerText = "Server disconnected";
+            }
+
+        };
+
+
+        // ==========================================
+        // 12. SPEECH TO TEXT
+        // ==========================================
+
+        const RecognitionAPI =
+            window.SpeechRecognition ||
+            window.webkitSpeechRecognition;
+
+        let recognition = null;
+
+        if (RecognitionAPI) {
+
+            recognition = new RecognitionAPI();
+
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = "en-IN";
+
+            recognition.onresult = function (event) {
+
+                let finalTranscript = "";
+                let interimTranscript = "";
+
+                for (
+                    let i = event.resultIndex;
+                    i < event.results.length;
+                    i++
+                ) {
+
+                    const transcript = event.results[i][0].transcript;
+
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript;
+                    } else {
+                        interimTranscript += transcript;
+                    }
+
+                }
+
+                const completeText =
+                    finalTranscript + interimTranscript;
+
+                if (completeText.trim() !== "") {
+
+                    captionA.innerText = completeText;
+
+                    sendSignal({
+                        type: "caption",
+                        text: completeText
+                    });
+
+                }
+
+            };
+
+
+            recognition.onerror = function (event) {
+
+                console.error("Speech recognition error:", event.error);
+
+                if (event.error === "not-allowed") {
+
+                    listening = false;
+                    captionsBtn.classList.remove("active");
+
+                }
+
+            };
+
+
+            recognition.onend = function () {
+
+                if (listening && !callEnded) {
+
+                    try {
+                        recognition.start();
+                    }
+
+                    catch (error) {
+                        console.log("Recognition restart:", error);
+                    }
+
+                }
+
+            };
+
+        } else {
+
+            console.warn("Speech recognition not supported.");
+
+            captionA.innerText =
+                "Speech recognition is not supported in this browser.";
+
+        }
+
+
+        // ==========================================
+        // 13. CAPTIONS BUTTON
+        // ==========================================
+
+        captionsBtn.onclick = function () {
+
+            if (!recognition) {
+
+                alert("Please use Google Chrome for speech recognition.");
+                return;
+
+            }
+
+            if (!listening) {
+
+                listening = true;
+                captionsEnabled = true;
+
+                captionsBtn.classList.add("active");
+
+                try {
+                    recognition.start();
+                }
+
+                catch (error) {
+                    console.error("Recognition error:", error);
+                }
+
+            } else {
+
+                listening = false;
+                captionsEnabled = false;
+
+                captionsBtn.classList.remove("active");
+
+                recognition.stop();
+
+                captionA.innerText = "Captions paused.";
+
+            }
+
+        };
+
+
+        // ==========================================
+        // 14. MICROPHONE BUTTON
+        // ==========================================
+
+        micBtn.onclick = function () {
+
+            if (!localStream) return;
+
+            const audioTrack = localStream.getAudioTracks()[0];
+
+            if (!audioTrack) return;
+
+            audioTrack.enabled = !audioTrack.enabled;
+
+            micBtn.classList.toggle("muted", !audioTrack.enabled);
+
+            micBtn.querySelector("span").innerText =
+                audioTrack.enabled ? "mic" : "mic_off";
+
+            console.log("Microphone enabled:", audioTrack.enabled);
+
+        };
+
+
+        // ==========================================
+        // 15. CAMERA BUTTON
+        // ==========================================
+
+        camBtn.onclick = function () {
+
+            if (!localStream || !outgoingStream) return;
+
+            const originalVideoTrack =
+                localStream.getVideoTracks()[0];
+
+            const correctedVideoTrack =
+                outgoingStream.getVideoTracks()[0];
+
+            if (!originalVideoTrack || !correctedVideoTrack) return;
+
+            const cameraEnabled = !correctedVideoTrack.enabled;
+
+            originalVideoTrack.enabled = cameraEnabled;
+            correctedVideoTrack.enabled = cameraEnabled;
+
+            camBtn.classList.toggle("muted", !cameraEnabled);
+
+            camBtn.querySelector("span").innerText =
+                cameraEnabled ? "videocam" : "videocam_off";
+
+            console.log("Camera enabled:", cameraEnabled);
+
+        };
+
+
+        // ==========================================
+        // 16. END CALL BUTTON
+        // ==========================================
+
+        endBtn.onclick = function () {
+
+            if (callEnded) return;
+
+            callEnded = true;
+            listening = false;
+
+            if (recognition) {
+                recognition.stop();
+            }
+
+            if (animationFrameId !== null) {
+                cancelAnimationFrame(animationFrameId);
+            }
+
+            if (localStream) {
+
+                localStream.getTracks().forEach(function (track) {
+                    track.stop();
+                });
+
+            }
+
+            if (outgoingStream) {
+
+                outgoingStream.getTracks().forEach(function (track) {
+                    track.stop();
+                });
+
+            }
+
+            peerConnection.close();
+
+            remoteVideo.srcObject = null;
+            localVideo.srcObject = null;
+
+            if (socket.readyState === WebSocket.OPEN) {
+                socket.close();
+            }
+
+            connectionStatus.innerText = "Call ended";
+
+            captionA.innerText = "Call ended.";
+            captionB.innerText = "Call ended.";
+
+            micBtn.disabled = true;
+            camBtn.disabled = true;
+            captionsBtn.disabled = true;
+            endBtn.disabled = true;
+
+            console.log("Call ended.");
+
+        };
+
+
+        // ==========================================
+        // 17. START THE PROJECT
+        // ==========================================
+
+        startMedia();
+
+    </script>
+
+</body>
+
+</html>
