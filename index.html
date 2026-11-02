@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISL Connect</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet">
+</head>
+
+<body>
+
+    <header id="topBar">
+        <h2>🤟 ISL Connect</h2>
+        <span id="connectionStatus">Your space for accessible communication</span>
+    </header>
+
+    <!-- HOME SCREEN -->
+    <section id="homeScreen" class="screen">
+        <div class="homeContent">
+            <div class="homeText">
+                <p class="eyebrow">COMMUNICATION WITHOUT BARRIERS</p>
+                <h1>Connect. Communicate.<br><span>Understand.</span></h1>
+                <p class="description">
+                    A video meeting space designed to bring people
+                    together through speech, captions and sign language.
+                </p>
+
+                <button id="createBtn" class="primaryBtn">
+                    <span class="material-symbols-outlined">add</span>
+                    Create a meeting
+                </button>
+
+                <div class="joinBox">
+                    <input id="meetingInput" type="text" placeholder="Paste a meeting link or enter a room ID">
+                    <button id="joinBtn" class="secondaryBtn">Join</button>
+                </div>
+                <p id="homeError" class="errorText"></p>
+            </div>
+
+            <div class="homeIllustration">
+                <div class="illustrationIcon">🤟</div>
+                <h2>Everyone deserves to be heard.</h2>
+                <p>Making online conversations more inclusive.</p>
+            </div>
+        </div>
+    </section>
+
+
+    <!-- PRE-JOIN SCREEN -->
+    <section id="prejoinScreen" class="screen hidden">
+        <div class="prejoinContent">
+            <div class="prejoinHeading">
+                <h1>Ready to join?</h1>
+                <p>Check your camera and microphone before entering.</p>
+            </div>
+
+            <div class="previewTile">
+                <video id="previewVideo" autoplay muted playsinline></video>
+                <div id="previewMessage" class="videoMessage">
+                    Starting your camera...
+                </div>
+            </div>
+
+            <div class="prejoinControls">
+                <button id="previewMicBtn" class="roundBtn">
+                    <span class="material-symbols-outlined">mic</span>
+                </button>
+                <button id="previewCamBtn" class="roundBtn">
+                    <span class="material-symbols-outlined">videocam</span>
+                </button>
+            </div>
+
+            <div class="meetingLinkBox">
+                <span id="meetingLinkText"></span>
+                <button id="copyLinkBtn" class="secondaryBtn">Copy link</button>
+            </div>
+
+            <div class="prejoinActions">
+                <button id="backBtn" class="secondaryBtn">Back</button>
+                <button id="joinNowBtn" class="primaryBtn">Join now</button>
+            </div>
+
+            <p id="prejoinError" class="errorText"></p>
+        </div>
+    </section>
+
+
+    <!-- LIVE MEETING SCREEN -->
+    <section id="meetingScreen" class="screen hidden">
+
+        <div class="meetingHeading">
+            <div>
+                <h2>ISL Connect Meeting</h2>
+                <p id="roomLabel"></p>
+            </div>
+            <button id="meetingCopyBtn" class="secondaryBtn">Copy invitation link</button>
+        </div>
+
+        <main id="videoArea">
+            <div class="tile">
+                <video id="localVideo" autoplay muted playsinline></video>
+                <div class="personName">You</div>
+                <div class="caption" id="captionA">Your captions will appear here.</div>
+            </div>
+
+            <div class="tile">
+                <video id="remoteVideo" autoplay playsinline></video>
+                <div class="personName" id="remoteName">Other participant</div>
+                <div class="caption" id="captionB">Waiting for captions...</div>
+            </div>
+        </main>
+
+        <div id="controlBar">
+            <button id="micBtn" class="roundBtn" title="Microphone">
+                <span class="material-symbols-outlined">mic</span>
+            </button>
+
+            <button id="camBtn" class="roundBtn" title="Camera">
+                <span class="material-symbols-outlined">videocam</span>
+            </button>
+
+            <button id="captionsBtn" class="roundBtn" title="Captions">
+                <span class="material-symbols-outlined">closed_caption</span>
+            </button>
+
+            <button id="endBtn" class="roundBtn endBtn" title="End call">
+                <span class="material-symbols-outlined">call_end</span>
+            </button>
+        </div>
+
+        <p id="meetingMessage"></p>
+    </section>
+
+
+    <script>
+        // =====================================
+        // 1. ELEMENTS AND SETTINGS
+        // =====================================
+
+        const homeScreen = document.getElementById("homeScreen");
+        const prejoinScreen = document.getElementById("prejoinScreen");
+        const meetingScreen = document.getElementById("meetingScreen");
+
+        const createBtn = document.getElementById("createBtn");
+        const joinBtn = document.getElementById("joinBtn");
+        const meetingInput = document.getElementById("meetingInput");
+
+        const previewVideo = document.getElementById("previewVideo");
+        const localVideo = document.getElementById("localVideo");
+        const remoteVideo = document.getElementById("remoteVideo");
+
+        const previewMessage = document.getElementById("previewMessage");
+        const previewMicBtn = document.getElementById("previewMicBtn");
+        const previewCamBtn = document.getElementById("previewCamBtn");
+
+        const joinNowBtn = document.getElementById("joinNowBtn");
+        const backBtn = document.getElementById("backBtn");
+        const copyLinkBtn = document.getElementById("copyLinkBtn");
+        const meetingCopyBtn = document.getElementById("meetingCopyBtn");
+
+        const micBtn = document.getElementById("micBtn");
+        const camBtn = document.getElementById("camBtn");
+        const captionsBtn = document.getElementById("captionsBtn");
+        const endBtn = document.getElementById("endBtn");
+
+        const captionA = document.getElementById("captionA");
+        const captionB = document.getElementById("captionB");
+
+        const connectionStatus = document.getElementById("connectionStatus");
+        const meetingMessage = document.getElementById("meetingMessage");
+
+        const SIGNALING_SERVER = "wss://sign-sync-ht5n.onrender.com";
+
+        let roomId = null;
+        let localStream = null;
+        let outgoingStream = null;
+        let cameraSource = null;
+        let cameraCanvas = null;
+        let canvasContext = null;
+        let animationFrameId = null;
+
+        let socket = null;
+        let peerConnection = null;
+        let myRole = null;
+        let peerReady = false;
+        let offerStarted = false;
+        let pendingCandidates = [];
+
+        let listening = false;
+        let captionsEnabled = true;
+        let callEnded = false;
+
+
+        // =====================================
+        // 2. SCREEN NAVIGATION
+        // =====================================
+
+        function showScreen(screen) {
+            homeScreen.classList.add("hidden");
+            prejoinScreen.classList.add("hidden");
+            meetingScreen.classList.add("hidden");
+
+            screen.classList.remove("hidden");
+        }
+
+        function makeMeetingLink() {
+            return window.location.origin +
+                window.location.pathname +
+                "?room=" + encodeURIComponent(roomId);
+        }
+
+        function updateMeetingLink() {
+            document.getElementById("meetingLinkText").innerText =
+                makeMeetingLink();
+
+            document.getElementById("roomLabel").innerText =
+                "Room ID: " + roomId;
+        }
+
+        function createRoomId() {
+            return Math.random().toString(36).substring(2, 10).toUpperCase();
+        }
+
+        function getRoomFromInput(value) {
+            const input = value.trim();
+
+            if (!input) return null;
+
+            try {
+                const url = new URL(input);
+                return url.searchParams.get("room");
+            } catch (error) {
+                return input.replace(/[^a-zA-Z0-9_-]/g, "");
+            }
+        }
+
+
+        // =====================================
+        // 3. CAMERA PREVIEW AND ORIENTATION
+        // =====================================
+
+        async function startPreview() {
+            if (localStream) return true;
+
+            try {
+                previewMessage.innerText = "Starting your camera...";
+
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: true
+                });
+
+                cameraSource = document.createElement("video");
+                cameraSource.srcObject = localStream;
+                cameraSource.autoplay = true;
+                cameraSource.muted = true;
+                cameraSource.playsInline = true;
+
+                await cameraSource.play();
+
+                if (!cameraSource.videoWidth) {
+                    await new Promise(resolve => {
+                        cameraSource.onloadedmetadata = resolve;
+                    });
+                }
+
+                cameraCanvas = document.createElement("canvas");
+                cameraCanvas.width = cameraSource.videoWidth;
+                cameraCanvas.height = cameraSource.videoHeight;
+
+                canvasContext = cameraCanvas.getContext("2d");
+
+                drawCameraFrame();
+
+                const correctedCameraStream = cameraCanvas.captureStream(30);
+                const correctedVideoTrack =
+                    correctedCameraStream.getVideoTracks()[0];
+
+                outgoingStream = new MediaStream();
+                outgoingStream.addTrack(correctedVideoTrack);
+
+                localStream.getAudioTracks().forEach(track => {
+                    outgoingStream.addTrack(track);
+                });
+
+                previewVideo.srcObject = outgoingStream;
+                localVideo.srcObject = outgoingStream;
+
+                previewMessage.style.display = "none";
+
+                return true;
+
+            } catch (error) {
+                console.error("Camera error:", error);
+                previewMessage.innerText =
+                    "Camera or microphone permission was not granted.";
+                document.getElementById("prejoinError").innerText =
+                    "Please allow camera and microphone access and try again.";
+                return false;
+            }
+        }
+
+        function drawCameraFrame() {
+            if (!cameraSource || !cameraCanvas || callEnded) return;
+
+            if (cameraSource.readyState >= 2 && cameraSource.videoWidth > 0) {
+                canvasContext.save();
+                canvasContext.translate(cameraCanvas.width, 0);
+                canvasContext.scale(-1, 1);
+
+                canvasContext.drawImage(
+                    cameraSource,
+                    0,
+                    0,
+                    cameraCanvas.width,
+                    cameraCanvas.height
+                );
+
+                canvasContext.restore();
+            }
+
+            animationFrameId = requestAnimationFrame(drawCameraFrame);
+        }
+
+
+        // =====================================
+        // 4. CREATE OR JOIN A MEETING
+        // =====================================
+
+        async function openPrejoin(id) {
+            roomId = id;
+            callEnded = false;
+
+            updateMeetingLink();
+            showScreen(prejoinScreen);
+
+            document.getElementById("prejoinError").innerText = "";
+
+            await startPreview();
+        }
+
+        createBtn.onclick = function () {
+            const id = createRoomId();
+            history.pushState({}, "", "?room=" + id);
+            openPrejoin(id);
+        };
+
+        joinBtn.onclick = function () {
+            const id = getRoomFromInput(meetingInput.value);
+
+            if (!id || !/^[a-zA-Z0-9_-]{1,64}$/.test(id)) {
+                document.getElementById("homeError").innerText =
+                    "Please enter a valid meeting link or room ID.";
+                return;
+            }
+
+            history.pushState({}, "", "?room=" + id);
+            openPrejoin(id);
+        };
+
+        backBtn.onclick = function () {
+            stopMedia();
+            roomId = null;
+            history.pushState({}, "", window.location.pathname);
+            showScreen(homeScreen);
+        };
+
+        copyLinkBtn.onclick = copyMeetingLink;
+        meetingCopyBtn.onclick = copyMeetingLink;
+
+        async function copyMeetingLink() {
+            try {
+                await navigator.clipboard.writeText(makeMeetingLink());
+                meetingMessage.innerText = "Meeting link copied!";
+            } catch (error) {
+                meetingMessage.innerText =
+                    "Please copy this link: " + makeMeetingLink();
+            }
+        }
+
+
+        // =====================================
+        // 5. PRE-JOIN CAMERA AND MIC BUTTONS
+        // =====================================
+
+        previewMicBtn.onclick = function () {
+            if (!localStream) return;
+
+            const track = localStream.getAudioTracks()[0];
+            if (!track) return;
+
+            track.enabled = !track.enabled;
+
+            previewMicBtn.classList.toggle("muted", !track.enabled);
+            previewMicBtn.querySelector("span").innerText =
+                track.enabled ? "mic" : "mic_off";
+        };
+
+        previewCamBtn.onclick = function () {
+            if (!localStream || !outgoingStream) return;
+
+            const originalTrack = localStream.getVideoTracks()[0];
+            const correctedTrack = outgoingStream.getVideoTracks()[0];
+
+            if (!originalTrack || !correctedTrack) return;
+
+            const enabled = !originalTrack.enabled;
+            originalTrack.enabled = enabled;
+            correctedTrack.enabled = enabled;
+
+            previewCamBtn.classList.toggle("muted", !enabled);
+            previewCamBtn.querySelector("span").innerText =
+                enabled ? "videocam" : "videocam_off";
+        };
+
+
+        // =====================================
+        // 6. START THE MEETING
+        // =====================================
+
+        joinNowBtn.onclick = async function () {
+            if (!localStream || !outgoingStream) {
+                const success = await startPreview();
+                if (!success) return;
+            }
+
+            showScreen(meetingScreen);
+            connectionStatus.innerText = "Connecting to meeting...";
+            meetingMessage.innerText = "Connecting to server...";
+
+            startMeetingConnection();
+        };
+
+
+        // =====================================
+        // 7. WEBRTC SETUP
+        // =====================================
+
+        function startMeetingConnection() {
+            peerReady = false;
+            offerStarted = false;
+            pendingCandidates = [];
+            callEnded = false;
+
+            peerConnection = new RTCPeerConnection({
+                iceServers: [
+                    { urls: "stun:stun.l.google.com:19302" }
+                ]
+            });
+
+            outgoingStream.getTracks().forEach(track => {
+                peerConnection.addTrack(track, outgoingStream);
+            });
+
+            peerConnection.onicecandidate = function (event) {
+                if (event.candidate) {
+                    sendSignal({
+                        type: "candidate",
+                        candidate: event.candidate
+                    });
+                }
+            };
+
+            peerConnection.ontrack = function (event) {
+                if (event.streams && event.streams.length > 0) {
+                    remoteVideo.srcObject = event.streams[0];
+                } else {
+                    if (!remoteVideo.srcObject) {
+                        remoteVideo.srcObject = new MediaStream();
+                    }
+                    remoteVideo.srcObject.addTrack(event.track);
+                }
+
+                remoteVideo.play().catch(error => {
+                    console.log("Remote playback:", error);
+                });
+            };
+
+            peerConnection.onconnectionstatechange = function () {
+                const state = peerConnection.connectionState;
+
+                console.log("WebRTC state:", state);
+
+                if (state === "connected") {
+                    connectionStatus.innerText = "Connected";
+                    meetingMessage.innerText = "You are in the meeting.";
+                } else if (state === "connecting") {
+                    connectionStatus.innerText = "Connecting...";
+                } else if (state === "disconnected") {
+                    connectionStatus.innerText = "Connection interrupted";
+                } else if (state === "failed") {
+                    connectionStatus.innerText = "Connection failed";
+                    meetingMessage.innerText =
+                        "Connection failed. This network may require a TURN server.";
+                } else if (state === "closed") {
+                    connectionStatus.innerText = "Call ended";
+                }
+            };
+
+            connectWebSocket();
+        }
+
+
+        // =====================================
+        // 8. WEB SOCKET CONNECTION
+        // =====================================
+
+        function connectWebSocket() {
+            const url = SIGNALING_SERVER +
+                "?room=" + encodeURIComponent(roomId);
+
+            socket = new WebSocket(url);
+
+            socket.onopen = function () {
+                console.log("Connected to ISL Connect server.");
+                connectionStatus.innerText = "Waiting for participant...";
+                meetingMessage.innerText = "Waiting for the other participant...";
+                sendSignal({ type: "ready" });
+            };
+
+            socket.onmessage = async function (event) {
+                const message = JSON.parse(event.data);
+                console.log("Server message:", message);
+
+                try {
+                    if (message.type === "waiting") {
+                        connectionStatus.innerText = "Waiting for participant...";
+                    }
+
+                    else if (message.type === "role") {
+                        myRole = message.role;
+
+                        document.getElementById("remoteName").innerText =
+                            myRole === "offerer" ? "Person B" : "Person A";
+
+                        console.log("My role:", myRole);
+                        await createOfferIfReady();
+                    }
+
+                    else if (message.type === "peer-ready") {
+                        peerReady = true;
+                        await createOfferIfReady();
+                    }
+
+                    else if (message.type === "room-full") {
+                        connectionStatus.innerText = "Room is full";
+                        meetingMessage.innerText =
+                            "This meeting already has two participants.";
+                    }
+
+                    else if (message.type === "invalid-room") {
+                        meetingMessage.innerText = "Invalid meeting room.";
+                    }
+
+                    else if (message.type === "offer") {
+                        await peerConnection.setRemoteDescription(
+                            message.description
+                        );
+
+                        await addPendingCandidates();
+
+                        const answer = await peerConnection.createAnswer();
+                        await peerConnection.setLocalDescription(answer);
+
+                        sendSignal({
+                            type: "answer",
+                            description: peerConnection.localDescription
+                        });
+                    }
+
+                    else if (message.type === "answer") {
+                        await peerConnection.setRemoteDescription(
+                            message.description
+                        );
+
+                        await addPendingCandidates();
+                    }
+
+                    else if (message.type === "candidate") {
+                        if (peerConnection.remoteDescription) {
+                            await peerConnection.addIceCandidate(message.candidate);
+                        } else {
+                            pendingCandidates.push(message.candidate);
+                        }
+                    }
+
+                    else if (message.type === "caption") {
+                        if (captionsEnabled) {
+                            captionB.innerText = message.text;
+                        }
+                    }
+
+                    else if (message.type === "peer-left") {
+                        peerReady = false;
+                        remoteVideo.srcObject = null;
+                        captionB.innerText = "Participant disconnected.";
+                        connectionStatus.innerText = "Other participant left";
+                        meetingMessage.innerText =
+                            "The other participant has left the meeting.";
+                    }
+
+                } catch (error) {
+                    console.error("Signaling error:", error);
+                }
+            };
+
+            socket.onerror = function (error) {
+                console.error("WebSocket error:", error);
+                connectionStatus.innerText = "Server connection error";
+            };
+
+            socket.onclose = function () {
+                if (!callEnded) {
+                    connectionStatus.innerText = "Server disconnected";
+                }
+            };
+        }
+
+        function sendSignal(data) {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify(data));
+            }
+        }
+
+
+        // =====================================
+        // 9. WEBRTC OFFER AND ANSWER
+        // =====================================
+
+        async function createOfferIfReady() {
+            if (
+                myRole !== "offerer" ||
+                !peerReady ||
+                offerStarted ||
+                callEnded
+            ) return;
+
+            offerStarted = true;
+
+            try {
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+
+                sendSignal({
+                    type: "offer",
+                    description: peerConnection.localDescription
+                });
+
+                console.log("Offer sent.");
+            } catch (error) {
+                offerStarted = false;
+                console.error("Offer error:", error);
+            }
+        }
+
+        async function addPendingCandidates() {
+            const candidates = pendingCandidates;
+            pendingCandidates = [];
+
+            for (const candidate of candidates) {
+                try {
+                    await peerConnection.addIceCandidate(candidate);
+                } catch (error) {
+                    console.error("ICE candidate error:", error);
+                }
+            }
+        }
+
+
+        // =====================================
+        // 10. SPEECH TO TEXT AND CAPTIONS
+        // =====================================
+
+        const RecognitionAPI =
+            window.SpeechRecognition ||
+            window.webkitSpeechRecognition;
+
+        let recognition = null;
+
+        if (RecognitionAPI) {
+            recognition = new RecognitionAPI();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = "en-IN";
+
+            recognition.onresult = function (event) {
+                let text = "";
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    text += event.results[i][0].transcript;
+                }
+
+                if (text.trim()) {
+                    captionA.innerText = text;
+                    sendCaption(text);
+                }
+            };
+
+            recognition.onerror = function (event) {
+                console.log("Speech recognition error:", event.error);
+            };
+
+            recognition.onend = function () {
+                if (listening && !callEnded) {
+                    try {
+                        recognition.start();
+                    } catch (error) {
+                        console.log("Recognition restart:", error);
+                    }
+                }
+            };
+        }
+
+        captionsBtn.onclick = function () {
+            if (!recognition) {
+                alert("Please use Google Chrome for speech recognition.");
+                return;
+            }
+
+            if (!listening) {
+                listening = true;
+                captionsEnabled = true;
+                captionsBtn.classList.add("active");
+
+                try {
+                    recognition.start();
+                } catch (error) {
+                    console.log(error);
+                }
+            } else {
+                listening = false;
+                captionsEnabled = false;
+                captionsBtn.classList.remove("active");
+                recognition.stop();
+                captionA.innerText = "Captions paused.";
+                captionB.innerText = "Captions hidden.";
+            }
+        };
+
+        // Daksh can call this function to send Sign-to-Text results.
+        window.sendCaption = function (text) {
+            if (!text || !text.trim()) return;
+
+            captionA.innerText = text;
+            sendSignal({
+                type: "caption",
+                text: text
+            });
+        };
+
+
+        // =====================================
+        // 11. LIVE MIC AND CAMERA CONTROLS
+        // =====================================
+
+        micBtn.onclick = function () {
+            if (!localStream) return;
+
+            const track = localStream.getAudioTracks()[0];
+            if (!track) return;
+
+            track.enabled = !track.enabled;
+
+            micBtn.classList.toggle("muted", !track.enabled);
+            micBtn.querySelector("span").innerText =
+                track.enabled ? "mic" : "mic_off";
+        };
+
+        camBtn.onclick = function () {
+            if (!localStream || !outgoingStream) return;
+
+            const originalTrack = localStream.getVideoTracks()[0];
+            const correctedTrack = outgoingStream.getVideoTracks()[0];
+
+            if (!originalTrack || !correctedTrack) return;
+
+            const enabled = !originalTrack.enabled;
+            originalTrack.enabled = enabled;
+            correctedTrack.enabled = enabled;
+
+            camBtn.classList.toggle("muted", !enabled);
+            camBtn.querySelector("span").innerText =
+                enabled ? "videocam" : "videocam_off";
+        };
+
+
+        // =====================================
+        // 12. STOP MEDIA AND END CALL
+        // =====================================
+
+        function stopMedia() {
+            if (animationFrameId !== null) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+
+            if (outgoingStream) {
+                outgoingStream.getTracks().forEach(track => track.stop());
+                outgoingStream = null;
+            }
+
+            previewVideo.srcObject = null;
+            localVideo.srcObject = null;
+
+            cameraSource = null;
+            cameraCanvas = null;
+            canvasContext = null;
+        }
+
+        endBtn.onclick = function () {
+            if (callEnded) return;
+
+            callEnded = true;
+            listening = false;
+
+            if (recognition) {
+                recognition.stop();
+            }
+
+            if (socket && socket.readyState < WebSocket.CLOSING) {
+                socket.close();
+            }
+
+            if (peerConnection) {
+                peerConnection.close();
+            }
+
+            remoteVideo.srcObject = null;
+            stopMedia();
+
+            connectionStatus.innerText = "Call ended";
+            meetingMessage.innerText = "You have left the meeting.";
+
+            micBtn.disabled = true;
+            camBtn.disabled = true;
+            captionsBtn.disabled = true;
+        };
+
+
+        // =====================================
+        // 13. OPEN A SHARED MEETING LINK
+        // =====================================
+
+        window.addEventListener("load", function () {
+            const params = new URLSearchParams(window.location.search);
+            const sharedRoom = params.get("room");
+
+            if (sharedRoom && /^[a-zA-Z0-9_-]{1,64}$/.test(sharedRoom)) {
+                openPrejoin(sharedRoom);
+            }
+        });
+
+    </script>
+
+</body>
+
+</html>
