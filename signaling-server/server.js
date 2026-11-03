@@ -13,31 +13,26 @@ const server = http.createServer((req, res) => {
 });
 
 const wss = new WebSocket.Server({ server });
-
 const rooms = new Map();
 
 console.log("ISL Connect signaling server starting...");
 
 wss.on("connection", function (ws, req) {
-
     const requestUrl = new URL(req.url, "http://localhost");
     const roomId = requestUrl.searchParams.get("room") || "main";
 
-    // Validate room ID
     if (!/^[a-zA-Z0-9_-]{1,64}$/.test(roomId)) {
         ws.send(JSON.stringify({ type: "invalid-room" }));
         ws.close();
         return;
     }
 
-    // Get or create the requested room
     if (!rooms.has(roomId)) {
         rooms.set(roomId, []);
     }
 
     const participants = rooms.get(roomId);
 
-    // Allow only two people in each meeting
     if (participants.length >= 2) {
         ws.send(JSON.stringify({ type: "room-full" }));
         ws.close();
@@ -61,8 +56,10 @@ wss.on("connection", function (ws, req) {
     }
 
     if (participants.length === 2) {
-        participants[0].isMediaReady = false;
-        participants[1].isMediaReady = false;
+
+        // IMPORTANT:
+        // Do not reset the first participant's ready status.
+        // They may have already sent their ready message.
 
         participants[0].send(JSON.stringify({
             type: "role",
@@ -78,7 +75,6 @@ wss.on("connection", function (ws, req) {
     }
 
     ws.on("message", function (message) {
-
         let data;
 
         try {
@@ -88,9 +84,7 @@ wss.on("connection", function (ws, req) {
             return;
         }
 
-        // Handle media-ready handshake
         if (data.type === "ready") {
-
             ws.isMediaReady = true;
 
             const otherParticipant = participants.find(
@@ -114,26 +108,20 @@ wss.on("connection", function (ws, req) {
             return;
         }
 
-        // Forward signaling and caption messages to the other participant
         participants.forEach(function (client) {
-
             if (
                 client !== ws &&
                 client.readyState === WebSocket.OPEN
             ) {
                 client.send(JSON.stringify(data));
             }
-
         });
-
     });
 
     ws.on("close", function () {
-
         console.log(`Participant left room ${roomId}.`);
 
         const currentRoom = rooms.get(roomId);
-
         if (!currentRoom) return;
 
         const remainingParticipants = currentRoom.filter(
@@ -149,9 +137,7 @@ wss.on("connection", function (ws, req) {
         rooms.set(roomId, remainingParticipants);
 
         remainingParticipants.forEach(function (client) {
-
             if (client.readyState === WebSocket.OPEN) {
-
                 client.isMediaReady = false;
 
                 client.send(JSON.stringify({
@@ -166,17 +152,13 @@ wss.on("connection", function (ws, req) {
                     type: "role",
                     role: "offerer"
                 }));
-
             }
-
         });
-
     });
 
     ws.on("error", function (error) {
         console.error("WebSocket error:", error);
     });
-
 });
 
 server.listen(PORT, "0.0.0.0", function () {
